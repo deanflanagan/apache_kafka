@@ -6,7 +6,7 @@
 1. [Objective](#Objective)
 2. [Local Setup on single node](#Local_Setup)
 3. [Configuration](#Configuration)
-4. [Testing](#Testing_Locally)
+4. [Testing](#Testing<space>Locally)
 
 
 ## Objective
@@ -69,6 +69,6 @@ So, optimization considerations aside, the vanilla Kafka installation will allow
 
 `enter data injection here`
 
-## Testing_Locally
+## Testing<space>Locally
 
 [mailto:test.test@gmail.com](mailto:test.test@gmail.com)
