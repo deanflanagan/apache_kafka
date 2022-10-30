@@ -61,14 +61,69 @@ Now a quick test in two shells with a consumer and producer so we can see messag
 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic first-topic --from-beginning
 ```
 
-So now we'll change the server.properties to use a new port and SSL encryption. The first step is to create our truststore and keystore. Once created, and commands will have to use the right port and include the key within any command to get a result. 
 
-## Configuration
+## Configuration Kafka to use SSL
 
-So, optimization considerations aside, the vanilla Kafka installation will allow for quick and dirty testing for topic creation and population. Some quick data to be input: 
+Now lets add ssl requirements. Basic steps:
 
-`enter data injection here`
+1. Generate the keys and certificates
+2. Create your own Certificate Authority (CA)
+3. Sign the certificate
 
-## Testing<space>Locally
+We will configure in 4 sections: Zookeeper broker(s), Zookeeper client, 
 
-[mailto:test.test@gmail.com](mailto:test.test@gmail.com)
+# Zookeeper broker
+
+The following commands will work but note you will have to input information yourself so they won't just run. 
+
+```
+mkdir /opt/kafka/ssl
+cd /opt/kafka/ssl
+
+keytool -keystore server.keystore.jks -alias localhost -validity 365 -genkey -keyalg RSA -ext SAN=DNS:localhost
+keytool -list -v -keystore server.keystore.jks
+keytool -keystore kafka.server.keystore.jks -alias localhost -keyalg RSA -validity 365 -genkey -storepass storekey -keypass storekey -dname "CN=Dean Flanagan, OU=Cloud, O=Sky Solutions, L=Fredericton, ST=NB, C=CA" -ext SAN=DNS:localhost
+
+openssl req -new -x509 -keyout ca-key -out ca-cert -days 365
+keytool -keystore kafka.client.truststore.jks -alias CARoot -importcert -file ca-cert
+keytool -keystore kafka.server.truststore.jks -alias CARoot -importcert -file ca-cert
+
+keytool -keystore kafka.server.keystore.jks -alias localhost -certreq -file cert-file
+keytool -keystore kafka.server.keystore.jks -alias CARoot -importcert -file ca-cert
+keytool -keystore kafka.server.keystore.jks -alias localhost -importcert -file cert-signed
+```
+Now add this to your zookeeper.properties (note I used passwords as 123456 so change to your own):
+
+```
+clientPort=2181
+secureClientPort=2182
+authProvider.x509=org.apache.zookeeper.server.auth.X509AuthenticationProvider
+serverCnxnFactory=org.apache.zookeeper.server.NettyServerCnxnFactory
+ssl.trustStore.location=/opt/kafka/ssl/kafka.zookeeper.truststore.jks
+ssl.trustStore.password=123456
+ssl.keyStore.location=/opt/kafka/ssl/kafka.zookeeper.keystore.jks
+ssl.keyStore.password=123456
+ssl.clientAuth=need
+```
+
+Restart your zookeeper:
+
+```
+sudo systemctl restart zookeeper
+```
+
+Now check out your logs in either logs/server.log or zookeeper-gc.log to see the new configuration. It should be running on port 2182.
+
+
+
+# Zookeeper client
+
+cd /opt/kafka/config
+sudo touch zookeeper-client.properties
+
+keytool -keystore kafka.zookeeper-client.truststore.jks -alias ca-cert -import -file ca-cert
+keytool -keystore kafka.zookeeper-client.keystore.jks -alias zookeeper-client -validity 360 -genkey -keyalg RSA -ext SAN=dns:localhost
+keytool -keystore kafka.zookeeper-client.keystore.jks -alias zookeeper-client -certreq -file ca-request-zookeeper-client
+openssl x509 -req -CA ca-cert -CAkey ca-key -in ca-request-zookeeper-client -out ca-signed-zookeeper-client -days 365 -CArecreateserial 
+keytool -keystore kafka.zookeeper-client.keystore.jks -alias ca-cert -import -file ca-cert
+keytool -keystore kafka.zookeeper-client.keystore.jks -alias zookeeper-client -import -file ca-signed-zookeeper-client
