@@ -1,129 +1,97 @@
-# Kafka SSL
+# Kafka Basic Commands
 
-<img src="https://www.nicepng.com/png/detail/246-2467588_kafka-logo-tall-apache-kafka-logo.png" alt="drawing" width="200"/>
+This document outlines how use Apache Kafka in a single node and some basic troubleshooting steps for a production (cluster) setup.
 
-## Table of Contents
-1. [Objective](#Objective)
-2. [Local Setup on single node](#Local_Setup)
-3. [Configuration](#Configuration)
-4. [Testing](#Testing<space>Locally)
+**Table of Contents**
 
+1. [Introduction](#introduction)
+2. [How it works](#install)
+3. [Troubleshooting](#troubleshooting)
 
-## Objective
+## Introduction <a name="introduction"></a>
 
-By default, Apache Kafka® communicates in <abbr>PLAINTEXT</abbr>, which means that all data is sent in the clear. To encrypt communication, you should configure all the Kafka to use <abbr>SSL</abbr> encryption.
+Apache Kafka is a distributed logging/messaging technology. It's used to distribute and replicate (copy) messages that need to be retained for a certain amount of time, and allows services to produce to and consume from its cluster. 
 
-This quick guide show the configuration setup to set configuration settings to enforce SSL. Initially I will have a script for a local installation of Kafka to be installed. Then i'll show how to set up a full Terraform & Ansible cluster provisioned with full internode communication.
+A cluster of Kafka nodes is a collection of instances that have Kafka installed on them and are allowed to communicate with one another in their provisioned network. For example, in AWS one can use:
 
-## Local_Setup
+ - Terraform to provision instances, security groups, EBS storage devices
+ - Ansible to provide configuration for a Kafka role and Kafka (server, consumer, producer property files), SSL and more
+ - IAM roles for NewRelic or other monitoring/management tools like CMAK/Kafka Manager to administer their clusters and report on crucial metrics
 
-The script below shows how to install and set up Kafka for a single node. This is solely to enlighten how SSL communication will work (no internode yet) will minimal configuration. Use the files in the single_node directory to run the script below yourself.
+ In this short tutorial I will walk through the very basics of setting up a single node (so no replicatoin) to demo how it works.
 
-```
-#!/bin/bash
+## How it works <a name="install"></a>
 
-sudo apt-get update
-# install java
-sudo apt install default-jre
+For this demo, I recommend setting up an AWS EC2 instance of type t2.medium. This is not free-tier eligible but using a smaller instance requires configuring Java runtime limits that aren't worth the effort for a quick demo. 
 
-# download and extract kafka and move directory to /opt
-wget https://downloads.apache.org/kafka/3.3.1/kafka_2.13-3.3.1.tgz
-sudo mkdir /opt/kafka
-sudo tar xzf kafka_2.13-3.3.1.tgz -C /opt/kafka --strip-components=1
-rm kafka_2.13-3.3.1.tgz
+Once launched, `ssh` into your instance - which we'll call a node or broker forthwith. The execute the commands found in `single_node/localInstallation.sh`. What this does is:
 
-# configure kafka and zookeeper as services
-sudo cp zookeeper.service /etc/systemd/system/zookeeper.service
-sudo cp kafka.service /etc/systemd/system/kafka.service
-# now reload the systemctl manager and enable and start both services
+1. Install the binaries needed to run Java
+2. Install Kafka in a dir where you'll run your commands from
+3. Set up Zookeeper and Kafka as services, enable and start them
+4. Produce to a topic and consume from it
 
-sudo systemctl daemon-reload 
+There are many other subjects on Kafka that bear mentioning. 
 
-sudo systemctl start zookeeper
-sudo systemctl enable zookeeper
+### Configuration and Management
 
-sudo systemctl start kafka
-sudo systemctl enable kafka
+Many large companies will have Kafka clusters with anywhere from 3 - 9+ nodes. The minimum recommended is 3. Say if you have 2 and 1 goes down, you don't have any replication: if that node goes down, you're in for a bad time. 
 
-```
+Then you have to decide on how many partitions you want per topic, and what the replication factor should be per topic. A few general rules:
 
-Now a quick test in two shells with a consumer and producer so we can see messages come through with plaintext.
+- If cluster size is small - <= 5 - you should go with a replication factor of 3. For a larger number of nodes, you can use 2
+- For partition count, more is mostly better. If say you have a small cluster and partition count of 15, you may get I/O throttling on the nodes themselves. Not a problem for bigger nodes/larger cluster. You may want to multiply your number of brokers by a set amount, say 2x partitions per broker. For topics you know will need scaling, you might want a higher number to account for a future increase in consumer groups off that topic. 
 
-```
-# a quick creation of a topic and then list that topics messages
-/opt/kafka/bin/kafka-topics.sh --create --topic first-topic --bootstrap-server localhost:9092
+### Server Properties
 
-# open a new terminal and write to thate topic in a consumer. Open a console consumer in the first terminal
-/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic first-topic
-/opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic first-topic
+For large systems that manage their own clusters (as opposed to Confluence or other companies that outsource cluster management), server, producer and consumer properties are absolutely worth exploring. This is a very deep topic and Confluence have a great guide on it that I won't get into here. But the crux is how to decide on behaviour for your cluster by determing whats important:
 
-# post a few messages and they should show up when you kill those and list topic and messages
-/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic first-topic --from-beginning
-```
+- Latency
+- Durability
+- Throughput
+- Availability
 
+An organization might be best served by setting up multiple clusters for each business need, configuring as necessary.
 
-## Configuration Kafka to use SSL
+### Encryption
 
-Now lets add ssl requirements. Basic steps:
+A brief `ssl-setup.sh` file has been included in this folder. In brief, there may be a regulatory need to encrypt data flowing through Kafka. The script provided should give an idea how you would approach setting it up through use of `openssl` and `keytool`. 
 
-1. Generate the keys and certificates
-2. Create your own Certificate Authority (CA)
-3. Sign the certificate
+### Zookeeper
 
-We will configure in 4 sections: Zookeeper broker(s), Zookeeper client, 
+Finally, the most recent versions of Kafka have done away with Zookeeper. Used to manage the distribution of messages and organize your configuration. Personally, it was a pain to have to provision separate nodes for ZK and the omission is welcome.
 
-# Zookeeper broker
+## Troubleshooting <a name="troubleshooting"></a>
 
-The following commands will work but note you will have to input information yourself so they won't just run. 
+When self managing your cluster, typical issues that arise might be:
+
+- Nodes/brokers becoming unavailable
+- Bad messages blocking consumer groups
+- Services not starting due to IAC errors/misses
+
+The commands in included below indicate how one might begin to troubleshoot these issues. 
 
 ```
-mkdir /opt/kafka/ssl
-cd /opt/kafka/ssl
+# check if service is enabled
+systemctl is-enabled kafka.service
 
-keytool -keystore server.keystore.jks -alias localhost -validity 365 -genkey -keyalg RSA -ext SAN=DNS:localhost
-keytool -list -v -keystore server.keystore.jks
-keytool -keystore kafka.server.keystore.jks -alias localhost -keyalg RSA -validity 365 -genkey -storepass storekey -keypass storekey -dname "CN=Dean Flanagan, OU=Cloud, O=Sky Solutions, L=Fredericton, ST=NB, C=CA" -ext SAN=DNS:localhost
+# check if service is active
+systemctl is-active kafka.service
 
-openssl req -new -x509 -keyout ca-key -out ca-cert -days 365
-keytool -keystore kafka.client.truststore.jks -alias CARoot -importcert -file ca-cert
-keytool -keystore kafka.server.truststore.jks -alias CARoot -importcert -file ca-cert
+# check if any under-replicated partitions on zookeeper or kakfa node
+/opt/kafka/bin/kafka-topics.sh --zookeeper $(hostname -s):2181 --describe --under-replicated-partitions | wc -l
+/opt/kafka/bin/kafka-topics.sh --bootstrap-server $(hostname -s):9092 --describe --under-replicated-partitions | wc -l
 
-keytool -keystore kafka.server.keystore.jks -alias localhost -certreq -file cert-file
-keytool -keystore kafka.server.keystore.jks -alias CARoot -importcert -file ca-cert
-keytool -keystore kafka.server.keystore.jks -alias localhost -importcert -file cert-signed
+# if a high lag is reported for any consumer group, first find your consumer group from this list. Note the egrep that filters out UUIDs, which are assigned to a consuerm group if the group wasn't given a name
+/opt/kafka/bin/kafka-consumer-groups.sh --list --bootstrap-server $(hostname -s):9092 | egrep  -v '[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{8}'
+
+# then describe to see the lag
+/opt/kafka/bin/kafka-consumer-groups.sh --describe --bootstrap-server $(hostname -s):9092 --group ucm-messages
+
+# now say your lag is high on a certain partition. You will first want to see if it's stuck or progressing. You can do
+watch   /opt/kafka/bin/kafka-consumer-groups.sh --describe --bootstrap-server $(hostname -s):9092 --group ucm-messages
+
+# take a screenshot and see if the lag is not moving on a certain partition. The problem is usually a bad message. So we can skip the message and change the offset in a number of ways
+# this command will skip one message on partition zero 
+kafka-consumer-groups.sh --bootstrap-server kafka-host:9092 --group my-group --reset-offsets --shift-by 1 --topic sales_topic:0 --execute
 ```
-Now add this to your zookeeper.properties (note I used passwords as 123456 so change to your own):
-
-```
-clientPort=2181
-secureClientPort=2182
-authProvider.x509=org.apache.zookeeper.server.auth.X509AuthenticationProvider
-serverCnxnFactory=org.apache.zookeeper.server.NettyServerCnxnFactory
-ssl.trustStore.location=/opt/kafka/ssl/kafka.zookeeper.truststore.jks
-ssl.trustStore.password=123456
-ssl.keyStore.location=/opt/kafka/ssl/kafka.zookeeper.keystore.jks
-ssl.keyStore.password=123456
-ssl.clientAuth=need
-```
-
-Restart your zookeeper:
-
-```
-sudo systemctl restart zookeeper
-```
-
-Now check out your logs in either logs/server.log or zookeeper-gc.log to see the new configuration. It should be running on port 2182.
-
-
-
-# Zookeeper client
-
-cd /opt/kafka/config
-sudo touch zookeeper-client.properties
-
-keytool -keystore kafka.zookeeper-client.truststore.jks -alias ca-cert -import -file ca-cert
-keytool -keystore kafka.zookeeper-client.keystore.jks -alias zookeeper-client -validity 360 -genkey -keyalg RSA -ext SAN=dns:localhost
-keytool -keystore kafka.zookeeper-client.keystore.jks -alias zookeeper-client -certreq -file ca-request-zookeeper-client
-openssl x509 -req -CA ca-cert -CAkey ca-key -in ca-request-zookeeper-client -out ca-signed-zookeeper-client -days 365 -CArecreateserial 
-keytool -keystore kafka.zookeeper-client.keystore.jks -alias ca-cert -import -file ca-cert
-keytool -keystore kafka.zookeeper-client.keystore.jks -alias zookeeper-client -import -file ca-signed-zookeeper-client
