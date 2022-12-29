@@ -57,10 +57,6 @@ An organization might be best served by setting up multiple clusters for each bu
 
 A brief `ssl-setup.sh` file has been included in this folder. In brief, there may be a regulatory need to encrypt data flowing through Kafka. The script provided should give an idea how you would approach setting it up through use of `openssl` and `keytool`. 
 
-### Zookeeper
-
-Finally, the most recent versions of Kafka have done away with Zookeeper. Used to manage the distribution of messages and organize your configuration. Personally, it was a pain to have to provision separate nodes for ZK and the omission is welcome.
-
 ## Troubleshooting <a name="troubleshooting"></a>
 
 When self managing your cluster, typical issues that arise might be:
